@@ -57,14 +57,25 @@ chat_client = AzureOpenAI(
 # Paths to prompt versions and test prompts
 PROMPTS_DIR = Path(__file__).parent.parent / "agents" / "trail_guide_agent" / "prompts"
 TEST_PROMPTS_DIR = Path(__file__).parent / "test-prompts"
+RESULTS_FILE = Path(__file__).resolve().parents[2] / "monitoring_results.txt"
 
 # Prompt versions to compare
-VERSIONS = ["v1", "v2", "v3"]
+VERSIONS = ["v1", "v2", "v3", "v4_optimized_concise"]
 
 
 def load_prompt(version: str) -> str:
     """Load a prompt version from the prompts directory."""
-    return (PROMPTS_DIR / f"{version}_instructions.txt").read_text().strip()
+    prompt_files = {
+        "v1": "v1_instructions.txt",
+        "v2": "v2_instructions.txt",
+        "v3": "v3_instructions.txt",
+        "v4_optimized_concise": "v4_optimized_concise.txt",
+    }
+    try:
+        prompt_file = prompt_files[version]
+    except KeyError as error:
+        raise ValueError(f"Unknown prompt version: {version}") from error
+    return (PROMPTS_DIR / prompt_file).read_text(encoding="utf-8").strip()
 
 
 def load_test_prompts() -> dict:
@@ -75,7 +86,7 @@ def load_test_prompts() -> dict:
     }
 
 
-def run_version(version: str, system_prompt: str, test_prompts: dict):
+def run_version(version: str, system_prompt: str, test_prompts: dict, results_file):
     """Run all test prompts for a single prompt version, wrapped in a trace span."""
     session_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
@@ -113,6 +124,13 @@ def run_version(version: str, system_prompt: str, test_prompts: dict):
                 span.set_attribute("response.completion_tokens", usage.completion_tokens)
                 span.set_attribute("response.total_tokens", usage.total_tokens)
 
+                results_file.write(
+                    f"{version}\t{test_name}\t{duration:.3f}\t"
+                    f"{usage.prompt_tokens}\t{usage.completion_tokens}\t"
+                    f"{usage.total_tokens}\n"
+                )
+                results_file.flush()
+
                 print(f"    Duration : {duration:.2f}s")
                 print(f"    Tokens   : {usage.total_tokens} "
                       f"(prompt: {usage.prompt_tokens}, completion: {usage.completion_tokens})")
@@ -128,9 +146,17 @@ if __name__ == "__main__":
     print(f"Loaded {len(test_prompts)} test prompts")
     print(f"Running versions: {', '.join(VERSIONS)}")
 
-    for version in VERSIONS:
-        system_prompt = load_prompt(version)
-        run_version(version, system_prompt, test_prompts)
+    with RESULTS_FILE.open("w", encoding="utf-8") as results_file:
+        results_file.write(
+            "Prompt version\tTest prompt\tDuration (seconds)\t"
+            "Prompt tokens\tCompletion tokens\tTotal tokens\n"
+        )
+
+        for version in VERSIONS:
+            system_prompt = load_prompt(version)
+            run_version(version, system_prompt, test_prompts, results_file)
+
+    print(f"Results written to {RESULTS_FILE}")
 
     print(f"\n{'='*60}")
     print("All versions complete.")
